@@ -1,0 +1,17 @@
+yolo-track-master/
+├── app.py
+├── app/                # 后端代码
+├── frontend/           # 前端项目目录（新建）
+│   ├── public/         # 静态资源（如 favicon、logo 等）
+│   ├── src/            # 前端源码
+│   │   ├── assets/     # 图片、样式等资源
+│   │   ├── components/ # 可复用组件
+│   │   ├── views/      # 页面视图
+│   │   ├── api/        # 封装与后端接口的请求
+│   │   ├── App.vue     # 主组件（Vue项目举例）
+│   │   └── main.js     # 入口文件
+│   ├── package.json    # 前端依赖和脚本
+│   └── ...             # 其他配置文件
+├── models/
+├── videos/
+└── ...                 # 其他后端相关文件
