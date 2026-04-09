@@ -128,7 +128,7 @@ def start_smart_service():
         if not cap.getCap().isOpened():
             return jsonify({"error": "无法打开视频源"}), 400
 
-        model_path = "models/yolo11n.pt"
+        model_path = Config.DEFAULT_SMART_MODEL_PATH
         if not os.path.exists(model_path):
             return jsonify({"error": "模型文件不存在"}), 400
 

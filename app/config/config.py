@@ -5,6 +5,14 @@ IP_CAMERA_URL = 'rtsp://admin:12345678.@192.168.1.65:554/Streaming/Channels/101'
 class Config:
     DEBUG = True
     PORT = 5000
+    API_PREFIX = "/api"
+    SMART_API_PREFIX = "/smart"
+
+    # 模型与推理配置
+    DEFAULT_MODEL_PATH = "models/yolov10n.pt"
+    DEFAULT_SMART_MODEL_PATH = "models/yolov10n.pt"
+    TRACK_HISTORY_SIZE = 30
+    PIXELS_PER_METER = 25.0
 
     # DeepSeek配置（可选）
     DEEPSEEK_API_KEY = ""  # 填入你的DeepSeek API密钥

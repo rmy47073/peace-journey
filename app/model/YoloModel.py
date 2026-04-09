@@ -3,6 +3,7 @@ import time
 import numpy as np
 from ultralytics import YOLO
 from collections import defaultdict
+from app.config.config import Config
 
 
 class YoloModel:
@@ -49,6 +50,21 @@ class YoloModel:
         self.traffic_flow = traffic_flow
         self.crossed_ids = set()
         self.crossing_count = 0
+        self.track_timestamps = {}
+        self.track_speeds = {}
+        self.latest_scene_data = {
+            "objects": [],
+            "vehicles": [],
+            "workers": [],
+            "equipment": [],
+            "danger_zone_objects": [],
+            "fast_vehicles": [],
+            "abnormal_stays": [],
+        }
+        self.vehicle_classes = {
+            "bicycle", "motorcycle", "car", "bus", "truck", "train", "boat"
+        }
+        self.worker_classes = {"person"}
 
     @staticmethod
     def draw_dashed_line(img, start, end, color, thickness, dash_length, gap_length):
@@ -119,13 +135,15 @@ class YoloModel:
             frame: Original frame (unchanged).
             birdView_frame: Bird’s-eye view frame with trajectory and lanes.
         """
+        frame_timestamp = time.time()
         results = self.model.track(frame, persist=True, show=False, verbose=False)
-        
+
         # 添加空值检查
         if not results or not results[0].boxes:
             return frame, frame, np.zeros((800, 500, 3), dtype=np.uint8)
-            
+
         boxes = results[0].boxes.xywh.cpu()
+        boxes_xyxy = results[0].boxes.xyxy.cpu()
         track_ids = results[0].boxes.id.int().cpu().tolist() if results[0].boxes.id is not None else []
         cls_indices = results[0].boxes.cls.int().cpu().tolist()
         class_names = self.model.names
@@ -133,8 +151,14 @@ class YoloModel:
         annotated_frame = results[0].plot()
         birdView_frame = np.zeros((800, 500, 3), dtype=np.uint8)
         self.draw_lane_lines(birdView_frame)
+        scene_objects = []
+        vehicles = []
+        workers = []
+        equipment = []
+        danger_zone_objects = []
+        fast_vehicles = []
 
-        for box, track_id, cls_idx in zip(boxes, track_ids, cls_indices):
+        for box, box_xyxy, track_id, cls_idx in zip(boxes, boxes_xyxy, track_ids, cls_indices):
             class_name = class_names[cls_idx]
 
             # Count new vehicle appearances
@@ -146,8 +170,12 @@ class YoloModel:
             x, y, w, h = box
             track = self.track_history[track_id]
             track.append((float(x), float(y)))
-            if len(track) > 30:
+            if len(track) > Config.TRACK_HISTORY_SIZE:
                 track.pop(0)
+
+            world_position = self._transform_point(float(x), float(y))
+            speed_kmh = self._estimate_speed(track_id, world_position, frame_timestamp)
+            in_hot_zone = False
 
             # Draw trajectory on original frame
             points = np.hstack(track).astype(np.int32).reshape((-1, 1, 2))
@@ -165,6 +193,7 @@ class YoloModel:
                 dst_point = cv2.perspectiveTransform(np.array([[[x, y]]], dtype=np.float32), self.M)
                 bx, by = dst_point[0][0]
                 if cv2.pointPolygonTest(self.hot_zone, (int(bx), int(by)), False) >= 0:
+                    in_hot_zone = True
                     if track_id not in self.entry_time:
                         self.entry_time[track_id] = time.time()
                     elif time.time() - self.entry_time[track_id] > self.stay_threshold:
@@ -195,7 +224,86 @@ class YoloModel:
                 cv2.putText(birdView_frame, f"ID:{track_id}", (int(bx), int(by) - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
 
+            object_data = {
+                "track_id": int(track_id),
+                "class_name": class_name,
+                "bbox_xywh": [float(x), float(y), float(w), float(h)],
+                "bbox_xyxy": [float(v) for v in box_xyxy.tolist()],
+                "image_position": [float(x), float(y)],
+                "position": list(world_position),
+                "world_position": list(world_position),
+                "speed": float(speed_kmh),
+                "in_hot_zone": in_hot_zone,
+            }
+            scene_objects.append(object_data)
+
+            if class_name in self.worker_classes:
+                worker_object = {**object_data, "has_helmet": True}
+                workers.append(worker_object)
+                if in_hot_zone:
+                    danger_zone_objects.append(worker_object)
+            elif class_name in self.vehicle_classes:
+                vehicles.append(object_data)
+                if speed_kmh > 0:
+                    fast_vehicles.append(object_data)
+                if in_hot_zone:
+                    danger_zone_objects.append(object_data)
+            else:
+                equipment.append(object_data)
+
+        self.latest_scene_data = {
+            "objects": scene_objects,
+            "vehicles": vehicles,
+            "workers": workers,
+            "equipment": equipment,
+            "danger_zone_objects": danger_zone_objects,
+            "fast_vehicles": fast_vehicles,
+            "abnormal_stays": sorted(self.long_stay_ids),
+        }
+
         return annotated_frame, frame, birdView_frame
+
+    def _transform_point(self, x, y):
+        src_point = np.array([[[x, y]]], dtype=np.float32)
+        dst_point = cv2.perspectiveTransform(src_point, self.M)
+        bx, by = dst_point[0][0]
+        return (
+            float(bx / Config.PIXELS_PER_METER),
+            float(by / Config.PIXELS_PER_METER),
+        )
+
+    def _estimate_speed(self, track_id, world_position, timestamp):
+        previous_timestamp = self.track_timestamps.get(track_id)
+        previous_position = self.track_history[track_id][-2] if len(self.track_history[track_id]) >= 2 else None
+        self.track_timestamps[track_id] = timestamp
+
+        if previous_timestamp is None or previous_position is None:
+            self.track_speeds[track_id] = 0.0
+            return 0.0
+
+        delta_t = timestamp - previous_timestamp
+        if delta_t <= 0:
+            return self.track_speeds.get(track_id, 0.0)
+
+        previous_world = self._transform_point(previous_position[0], previous_position[1])
+        distance_m = np.sqrt(
+            (world_position[0] - previous_world[0]) ** 2 +
+            (world_position[1] - previous_world[1]) ** 2
+        )
+        speed_kmh = (distance_m / delta_t) * 3.6
+        self.track_speeds[track_id] = float(speed_kmh)
+        return float(speed_kmh)
+
+    def get_scene_data(self):
+        return {
+            "objects": list(self.latest_scene_data.get("objects", [])),
+            "vehicles": list(self.latest_scene_data.get("vehicles", [])),
+            "workers": list(self.latest_scene_data.get("workers", [])),
+            "equipment": list(self.latest_scene_data.get("equipment", [])),
+            "danger_zone_objects": list(self.latest_scene_data.get("danger_zone_objects", [])),
+            "fast_vehicles": list(self.latest_scene_data.get("fast_vehicles", [])),
+            "abnormal_stays": list(self.latest_scene_data.get("abnormal_stays", [])),
+        }
 
     def get_statistics(self):
         """
@@ -222,5 +330,16 @@ class YoloModel:
         self.long_stay_ids = set()
         self.crossing_count = 0
         self.crossed_ids.clear()
+        self.track_timestamps.clear()
+        self.track_speeds.clear()
+        self.latest_scene_data = {
+            "objects": [],
+            "vehicles": [],
+            "workers": [],
+            "equipment": [],
+            "danger_zone_objects": [],
+            "fast_vehicles": [],
+            "abnormal_stays": [],
+        }
 
    

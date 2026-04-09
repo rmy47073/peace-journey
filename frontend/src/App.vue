@@ -8,6 +8,7 @@
         <router-link to="/videos">视频列表</router-link>
         <router-link to="/camera">视频源配置</router-link>
         <router-link to="/service">服务监控</router-link>
+        <router-link to="/smart">智能监控</router-link>
         <router-link to="/frames">帧预览</router-link>
         <router-link to="/statistics">统计信息</router-link>
       </nav>

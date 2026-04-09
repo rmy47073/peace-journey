@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from app import create_app
+from app_factory import create_app
 from app.config.config import Config
 
 

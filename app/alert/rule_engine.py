@@ -34,7 +34,7 @@ class WorkerInDangerZoneRule(SafetyRule):
         workers = scene_data.get("workers", [])
 
         for worker in workers:
-            position = worker.get("position")
+            position = worker.get("image_position") or worker.get("position")
             if position and self._in_danger_zone(position):
                 alerts.append({
                     "rule_id": self.rule_id,
@@ -117,12 +117,12 @@ class VehicleWorkerProximityRule(SafetyRule):
         workers = scene_data.get("workers", [])
 
         for vehicle in vehicles:
-            v_pos = vehicle.get("position")
+            v_pos = vehicle.get("world_position") or vehicle.get("position")
             if not v_pos:
                 continue
 
             for worker in workers:
-                w_pos = worker.get("position")
+                w_pos = worker.get("world_position") or worker.get("position")
                 if not w_pos:
                     continue
 

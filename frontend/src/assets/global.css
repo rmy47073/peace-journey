@@ -5,12 +5,42 @@ body {
   margin: 0;
   padding: 0;
 }
+a {
+  color: inherit;
+}
+#app {
+  min-height: 100vh;
+}
 .header {
   background: #1890ff;
   color: #fff;
   padding: 16px;
   display: flex;
   align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.title {
+  font-size: 20px;
+  font-weight: 700;
+}
+.nav {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.nav a {
+  text-decoration: none;
+  padding: 6px 10px;
+  border-radius: 999px;
+}
+.nav a.router-link-active {
+  background: rgba(255, 255, 255, 0.18);
+}
+.main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 16px 40px;
 }
 .logo {
   height: 40px;
@@ -34,4 +64,19 @@ body {
   box-shadow: 0 2px 8px rgba(0,0,0,0.05);
   padding: 24px;
   margin: 16px 0;
+}
+input,
+textarea,
+select {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #c9d4df;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 6px;
+}
+label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 12px;
 }

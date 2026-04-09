@@ -42,11 +42,9 @@ const rowFrameUrl = ref('')
 const processedFrameUrl = ref('')
 const birdViewFrameUrl = ref('')
 let refreshInterval = null
-const oldUrls = []
 
 function setUrl(urlRef, blob) {
   if (urlRef.value) {
-    oldUrls.push(urlRef.value)
     URL.revokeObjectURL(urlRef.value)
   }
   urlRef.value = URL.createObjectURL(blob)
@@ -92,9 +90,22 @@ onBeforeUnmount(() => {
   if (refreshInterval) {
     clearInterval(refreshInterval)
   }
-  oldUrls.forEach(url => URL.revokeObjectURL(url))
   if (rowFrameUrl.value) URL.revokeObjectURL(rowFrameUrl.value)
   if (processedFrameUrl.value) URL.revokeObjectURL(processedFrameUrl.value)
   if (birdViewFrameUrl.value) URL.revokeObjectURL(birdViewFrameUrl.value)
 })
 </script>
+
+<style scoped>
+.frames {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+img {
+  width: 100%;
+  border-radius: 10px;
+  background: #eef3f8;
+}
+</style>

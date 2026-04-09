@@ -117,18 +117,20 @@ class SmartMonitoringService:
     def _build_scene_data(self, timestamp: float, frame_count: int) -> Dict:
         """构建场景数据用于规则评估"""
         stats = self.model.get_statistics()
+        model_scene = self.model.get_scene_data()
 
-        # 简化版场景数据，实际应从跟踪结果提取详细信息
         scene_data = {
             "timestamp": timestamp,
             "frame_count": frame_count,
             "vehicle_count": stats.get("total_count", 0),
-            "worker_count": 0,  # 需要扩展YOLO模型支持人员检测
-            "vehicles": [],  # 需要从track_history提取
-            "workers": [],
-            "danger_zone_objects": [],
-            "fast_vehicles": [],
-            "abnormal_stays": list(self.model.long_stay_ids)
+            "worker_count": len(model_scene.get("workers", [])),
+            "vehicles": model_scene.get("vehicles", []),
+            "workers": model_scene.get("workers", []),
+            "equipment": model_scene.get("equipment", []),
+            "objects": model_scene.get("objects", []),
+            "danger_zone_objects": model_scene.get("danger_zone_objects", []),
+            "fast_vehicles": model_scene.get("fast_vehicles", []),
+            "abnormal_stays": model_scene.get("abnormal_stays", []),
         }
 
         return scene_data

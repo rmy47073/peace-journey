@@ -21,7 +21,16 @@ const statistics = ref(null)
 const serviceId = 1 // 实际应由父组件传入
 
 onMounted(async () => {
-  const res = await getStatistics(serviceId)
-  statistics.value = res.data.statistics
+  try {
+    const res = await getStatistics(serviceId)
+    statistics.value = res.data.statistics
+  } catch (error) {
+    statistics.value = {
+      total_count: 0,
+      category_count: '暂无运行中的基础服务',
+      long_stay_count: 0,
+      crossing_count: 0
+    }
+  }
 })
 </script>

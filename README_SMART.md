@@ -56,27 +56,42 @@
 - 告警历史记录
 - 决策建议输出
 
-## 项目结构
+## 当前第一版项目结构
 
 ```
 yolo-track-master/
 ├── app/
 │   ├── __init__.py
-│   ├── routes.py                    # 原有API路由
-│   ├── smart_routes.py              # 智能监控API路由 (新增)
+│   ├── api/                         # API层
+│   │   ├── __init__.py
+│   │   ├── routes.py
+│   │   └── smart_routes.py
+│   ├── routes.py                    # 兼容原有基础路由
+│   ├── smart_routes.py              # 兼容原有智能监控路由
 │   │
 │   ├── config/
 │   │   ├── __init__.py
 │   │   └── config.py                # 配置文件 (已更新)
 │   │
+│   ├── core/                        # 算法能力层
+│   │   ├── detector/
+│   │   ├── geometry/
+│   │   ├── reasoning/
+│   │   └── rules/
+│   │
 │   ├── model/
 │   │   ├── __init__.py
 │   │   └── YoloModel.py             # YOLO检测模型
 │   │
+│   ├── schema/                      # 结构化场景/告警模型
+│   ├── repository/                  # 持久化接口占位
+│   │
 │   ├── service/
 │   │   ├── __init__.py
 │   │   ├── YoloService.py           # 原有YOLO服务
-│   │   └── SmartMonitoringService.py # 智能监控服务 (新增)
+│   │   ├── SmartMonitoringService.py # 智能监控服务
+│   │   ├── alert_service.py
+│   │   └── event_service.py
 │   │
 │   ├── alert/                        # 告警模块 (新增)
 │   │   ├── __init__.py
@@ -91,11 +106,17 @@ yolo-track-master/
 │       ├── __init__.py
 │       └── Camera.py                # 摄像头工具
 │
+├── docs/
+│   └── architecture.md
+├── train/
+│   └── scripts/
 ├── models/
-│   └── yolo11n.pt                   # YOLO模型文件
+│   └── yolov10n.pt                  # 当前默认YOLO模型文件
 │
 ├── videos/                          # 测试视频
 ├── frontend/                        # 前端界面
+├── tests/
+├── app_factory.py                   # 新的应用工厂入口
 ├── app.py                           # 应用入口
 ├── requirements.txt                 # 依赖包 (已更新)
 └── README_SMART.md                  # 本文档
