@@ -1,6 +1,6 @@
 <template>
   <my-card>
-    <h2>选择视频源</h2>
+    <h2>选择视频文件</h2>
     <form @submit.prevent="submit">
       <label>
         <input type="radio" v-model="type" value="file" /> 本地视频文件
@@ -63,7 +63,7 @@ async function submit() {
       serviceId.value = res.data.service_id
       console.log('serviceId已设置:', serviceId.value)
     } else {
-      serviceId.value = '' // 清空无效值
+      serviceId.value = '' // 清空无效serviceId
     }
   } catch (e) {
     console.error('[ERROR] startService调用失败:', e);

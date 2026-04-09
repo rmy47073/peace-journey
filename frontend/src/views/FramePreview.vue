@@ -31,24 +31,39 @@ const props = defineProps({
     validator: (value) => {
       const isValid = !!value && (typeof value === 'string' || typeof value === 'number');
       if (!isValid) {
-        console.error(`FramePreview: 无效的serviceId: ${value}`);
+        console.error(`FramePreview: Invalid serviceId: ${value}`);
       }
       return isValid;
     }
   }
 });
 
+const rowFrameUrl = ref('')
+const processedFrameUrl = ref('')
+const birdViewFrameUrl = ref('')
+let refreshInterval = null
+const oldUrls = []
+
+function setUrl(urlRef, blob) {
+  if (urlRef.value) {
+    oldUrls.push(urlRef.value)
+    URL.revokeObjectURL(urlRef.value)
+  }
+  urlRef.value = URL.createObjectURL(blob)
+}
+
 onMounted(async () => {
   if (!props.serviceId) {
-    console.error('FramePreview挂载时缺少serviceId');
+    console.error('FramePreview mounted without serviceId');
     return;
   }
   
   // 添加服务ID有效性检查
   if (typeof props.serviceId !== 'string' && typeof props.serviceId !== 'number') {
-    console.error('FramePreview: serviceId必须是字符串或数字');
+    console.error('FramePreview: serviceId must be string or number');
     return;
   }
+  
   const refreshFrames = async () => {
     try {
       console.log('Fetching frames for service:', props.serviceId)
@@ -64,7 +79,7 @@ onMounted(async () => {
       console.log('Bird view response:', birdRes.status, birdRes.data.size)
       setUrl(birdViewFrameUrl, birdRes.data)
     } catch (error) {
-      console.error('获取帧数据失败:', error)
+      console.error('Failed to fetch frame data:', error)
     }
   }
   
@@ -74,7 +89,9 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  clearInterval(refreshInterval)
+  if (refreshInterval) {
+    clearInterval(refreshInterval)
+  }
   oldUrls.forEach(url => URL.revokeObjectURL(url))
   if (rowFrameUrl.value) URL.revokeObjectURL(rowFrameUrl.value)
   if (processedFrameUrl.value) URL.revokeObjectURL(processedFrameUrl.value)

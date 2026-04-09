@@ -9,5 +9,15 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
       '@views': path.resolve(__dirname, './src/views')
     }
+  },
+  server: {
+    port: 3000,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        secure: false
+      }
+    }
   }
 })

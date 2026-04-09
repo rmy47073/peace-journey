@@ -6,3 +6,9 @@ import './assets/global.css' // 引入全局样式
 const app = createApp(App)
 app.use(router)
 app.mount('#app')
+
+
+
+
+
+

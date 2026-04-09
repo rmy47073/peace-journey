@@ -95,9 +95,15 @@ class YoloService:
         return None
 
     def get_processed_frame(self):
-        frame = self.processedQueue.get()
-        _, buffer = cv2.imencode('.jpg', frame)
-        return base64.b64encode(buffer).decode('utf-8')
+        """
+        Get the latest processed frame.
+
+        Returns:
+            np.ndarray or None: The processed frame if available, otherwise None.
+        """
+        if not self.processedQueue.empty():
+            return self.processedQueue.get()
+        return None
 
     def get_birdView_frame(self):
         """

@@ -8,7 +8,7 @@
 
 <script setup>
 defineProps({
-  message: { type: String, default: 'æš‚æ— æ•°æ®' }
+  message: { type: String, default: 'ÔİÎŞÊı¾İ' }
 });
 </script>
 
