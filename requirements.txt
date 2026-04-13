@@ -1,8 +1,11 @@
-opencv-python~=4.11.0.86
-numpy~=1.26.4
-ultralytics~=8.3.5
+# Web API
 flask~=3.0.2
 flask-cors~=4.0.0
+requests~=2.31.0
+
+# CV / AI
+opencv-python~=4.11.0.86
+numpy~=1.26.4
 torch~=2.4.1
 torchvision~=0.19.1
-requests~=2.31.0
+ultralytics~=8.3.5
