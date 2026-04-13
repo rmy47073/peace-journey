@@ -1,103 +1,130 @@
-# 🚗 Intelligent Vehicle Monitoring System
+# YOLO 施工道路智能监控系统
 
-> A Flask-powered real-time vehicle detection and monitoring system with YOLO, multithreaded processing, perspective transformation, and web API support.
+基于 `Flask + Vue + Ultralytics YOLO` 的视频监控项目，支持本地视频/网络摄像头接入、实时检测、智能告警与（可选）DeepSeek 风险分析。
 
-## 📌 Features
+## 项目概述
 
-- 🔍 **Real-time Vehicle Detection** using YOLO
-- 🎯 **Perspective Transformation** with customizable bird’s-eye view
-- 🔧 **Modular Service Management** (multi-service support via `service_id`)
-- 📊 **Vehicle Statistics** (e.g. counts, movement)
-- 🧵 **Multi-threaded Processing** to ensure responsive UI and real-time performance
-- 🌐 **RESTful API** for frontend/backend integration
-- 🎥 **Support for both Local Video & Live Camera Streams**
----
+本项目包含两条主要能力线：
 
-## 🗂️ Project Structure
+- `基础检测服务`：实时画面识别、车辆/人员目标检测、帧流接口。
+- `智能监控服务`：规则引擎（如超速、车人过近、危险区）+ 告警历史 + 可选 DeepSeek 推理增强。
 
-```
+核心特点：
+
+- 本地视频与 RTSP 摄像头双输入。
+- 前后端分离，前端可直接选取 `videos/` 下素材并预览。
+- 采集线程与推理线程解耦，降低卡顿。
+- 告警历史静态保存（轮询不消费），支持滚动查看。
+- 可切换是否启用目标跟踪（`track`/`predict`）。
+
+## 技术栈
+
+- 后端：`Python`、`Flask`、`OpenCV`、`PyTorch`、`Ultralytics`
+- 前端：`Vue 3`、`Vite`、`Axios`、`Vue Router`
+
+## 目录结构（简版）
+
+```text
 .
-├── README.md
-├── app
-│   ├── __init__.py
-│   ├── routes.py
-│   ├── config
-│   │   ├── __init__.py
-│   │   └── config.py
-│   ├── model
-│   │   ├── YoloModel.py
-│   │   └── __init__.py
-│   ├── service
-│   │   ├── YoloService.py
-│   │   └── __init__.py
-│   └── util
-│       ├── Camera.py
-│       └── __init__.py
-├── app.py
-├── models
-│   └── yolo11n.pt
-├── requirements.txt
-├── test
-│   └── YoloModelTest.py
-└── videos
-    ├── test.mp4
-    └── test1.mp4
+├─app/                    # 后端业务
+│  ├─config/              # 配置项（模型、推理参数、DeepSeek、规则阈值）
+│  ├─model/               # YOLO 模型封装
+│  ├─service/             # 基础检测与智能监控服务
+│  ├─ai/                  # DeepSeek 客户端与推理引擎
+│  ├─routes.py            # /api 路由
+│  └─smart_routes.py      # /smart 路由
+├─frontend/               # Vue 前端
+├─models/                 # YOLO 权重（*.pt）
+├─videos/                 # 本地测试视频
+├─requirements.txt        # Python 依赖
+└─app.py                  # 后端启动入口
 ```
 
+## 环境与依赖
 
+建议环境：
 
----
+- `Python 3.10+`
+- `Node.js 18+`（或 20）
+- `npm 9+`
 
-## 🚀 Quick Start
+Python 依赖（见 `requirements.txt`）：
 
-### 1. Install Dependencies
+- `opencv-python`
+- `numpy`
+- `ultralytics`
+- `flask`
+- `flask-cors`
+- `torch`
+- `torchvision`
+- `requests`
 
-```commandline
+前端依赖（见 `frontend/package.json`）：
+
+- `vue`
+- `vue-router`
+- `axios`
+- `vite`
+- `@vitejs/plugin-vue`
+
+## 如何启动
+
+### 1) 准备模型与视频
+
+1. 将 YOLO 权重文件放到 `models/`（例如 `models/yolov10n.pt`）。
+2. 将测试视频放到 `videos/`（可在前端直接选择并分析）。
+
+### 2) 启动后端
+
+```bash
+# 建议在项目根目录
+python -m venv .venv
+
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+
+# 安装依赖
 pip install -r requirements.txt
-```
 
-### 2. Prepare YOLO Model
-Download YOLOv10 model file and place it at:
-```
-./models/*.pt
-```
-
-You can get it from [YOLO official website](https://github.com/ultralytics/ultralytics) or convert a .pt file via training.
-
-### 3. Run the Server
-
-```commandline
+# 启动 Flask
 python app.py
 ```
-flask server will run on `http://localhost:5000`
 
----
+默认监听：`http://localhost:5000`
 
-## 🔮 Future Improvements
-While the current system already supports real-time vehicle detection, multithreaded backend services,
-and flexible video source handling, there are several exciting directions for future enhancements:
+### 3) 启动前端
 
-- ### 🚀 Performance Optimization
- Improves the backend service responsiveness
-  and reduces processing latency under high-concurrency or long-duration tasks,
-  especially when dealing with high-resolution streams.
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-- ### 📊 Richer Statistics & Analytics
- Add advanced metrics such as vehicle counting by type, speed estimation,
-  and violation detection (e.g., running red lights, wrong-way driving)
-  to better serve traffic management and security scenarios.
+默认访问：`http://localhost:3000`
 
-- ### 🧠 Smarter Lane Detection
- Introduces a more robust and accurate lane line recognition module that integrates seamlessly with vehicle tracking,
- even in complex environments with occlusions or poor lighting.
+前端开发代理已配置到后端：
 
-- ### 🌐 Web UI Enhancement
- Develops a user-friendly web dashboard for visualizing statistics,
- watching processed video streams, and managing uploaded footage.
+- `/api` -> `http://localhost:5000`
+- `/smart` -> `http://localhost:5000`
 
-- ### 🤝 Third-Party Integration
- Explore integration with GIS systems, traffic control platforms, or even cloud-based video analysis tools.
+## DeepSeek（可选）
 
----
+如果需要 AI 推理增强，请配置环境变量：
 
-Stay tuned—this project has wheels, and it’s just starting to roll. 🚗💨
+```bash
+# Windows PowerShell
+$env:DEEPSEEK_API_KEY="your_key_here"
+```
+
+然后重启后端。未配置时，系统仍可运行规则引擎，但不会调用 DeepSeek。
+
+## 常用配置位置
+
+主要配置在 `app/config/config.py`：
+
+- 推理性能：`PROCESS_EVERY_N_FRAMES`、`YOLO_IMGSZ`、`MAX_FRAME_WIDTH`
+- 跟踪开关：`ENABLE_TRACKING`
+- 视频节流：`SYNC_VIDEO_FILE_TO_REALTIME`
+- 告警历史：`ALERT_HISTORY_MAX`
+- DeepSeek：`DEEPSEEK_ENABLED`、`LLM_*`
+
