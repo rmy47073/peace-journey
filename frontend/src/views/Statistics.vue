@@ -18,7 +18,7 @@ import Loading from '@/components/Loading.vue'
 import { getStatistics } from '@/api/service'
 
 const statistics = ref(null)
-const serviceId = 1 // 实际应由父组件传入
+const serviceId = 1
 
 onMounted(async () => {
   try {

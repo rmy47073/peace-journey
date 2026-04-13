@@ -9,6 +9,7 @@ import threading
 import numpy as np
 from functools import wraps
 from app.util.Camera import Camera
+from app.util.video_fs import list_video_files, resolve_safe_video_file
 from app.service.SmartMonitoringService import SmartMonitoringService
 from app.alert.rule_engine import (
     RuleEngine,
@@ -19,7 +20,25 @@ from app.alert.rule_engine import (
 from app.ai.deepseek_client import DeepSeekClient
 from app.ai.reasoning_engine import ReasoningEngine
 from app.config.config import Config
+import json
 from flask import request, Blueprint, jsonify, Response
+
+
+def _coerce_bool(value, default=False):
+    """解析 JSON / 表单里的布尔值，避免字符串 \"true\" 被当成真。"""
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in ("1", "true", "yes", "on"):
+            return True
+        if s in ("0", "false", "no", "off", ""):
+            return False
+    return bool(value)
 
 
 # 装饰器：需要运行中的服务
@@ -55,7 +74,7 @@ def send_frame_response(frame):
         return jsonify({"error": "No frame available"}), 400
 
     if isinstance(frame, np.ndarray):
-        ret, jpeg = cv2.imencode('.jpg', frame)
+        ret, jpeg = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), int(Config.JPEG_QUALITY)])
         if not ret:
             return jsonify({"error": "Failed to encode frame"}), 500
         frame = jpeg.tobytes()
@@ -69,9 +88,7 @@ def send_frame_response(frame):
 # 路由：获取视频文件列表
 @smart_api_bp.route('/fileList', methods=['GET'])
 def fileList():
-    folder_path = "./videos"
-    file_list = [f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))]
-    return jsonify({"file_list": file_list}), 200
+    return jsonify({"file_list": list_video_files()}), 200
 
 
 # 路由：获取单帧
@@ -79,6 +96,11 @@ def fileList():
 def get_one_frame():
     cap_type = request.json.get('cap_type')
     cap_path = request.json.get('cap_path')
+    if cap_type == 'file':
+        safe = resolve_safe_video_file(cap_path)
+        if not safe:
+            return jsonify({"error": "无效的视频路径"}), 400
+        cap_path = safe
     cap = Camera()
     cap.setCap(cap_type, cap_path)
     if not cap.getCap().isOpened():
@@ -90,12 +112,7 @@ def get_one_frame():
     if not ret:
         return jsonify({"error": "Failed to capture frame"}), 500
 
-    ret, jpeg = cv2.imencode('.jpg', frame)
-    if not ret:
-        return jsonify({"error": "Failed to encode frame"}), 500
-    frame_bytes = jpeg.tobytes()
-
-    return send_frame_response(frame_bytes)
+    return send_frame_response(frame)
 
 
 # 路由：启动智能监控服务
@@ -108,13 +125,22 @@ def start_smart_service():
     cap_type = request.json.get('cap_type')
     cap_path = request.json.get('cap_path')
     danger_zones = request.json.get('danger_zones', [])  # 危险区域配置
-    enable_ai = request.json.get('enable_ai', Config.DEEPSEEK_ENABLED)
+    enable_ai = _coerce_bool(
+        request.json.get("enable_ai"),
+        default=bool(getattr(Config, "DEEPSEEK_ENABLED", False)),
+    )
 
     # 参数验证
     if not src_points or len(src_points) < 4:
         return jsonify({"error": "至少需要4个源点坐标"}), 400
     if not cap_type or not cap_path:
         return jsonify({"error": "必须提供capture类型和路径"}), 400
+
+    if cap_type == 'file':
+        safe = resolve_safe_video_file(cap_path)
+        if not safe:
+            return jsonify({"error": "无效的视频路径"}), 400
+        cap_path = safe
 
     try:
         # 转换坐标点
@@ -139,11 +165,29 @@ def start_smart_service():
         rule_engine.add_rule(VehicleSpeedingRule(Config.VEHICLE_SPEED_LIMIT))
         rule_engine.add_rule(VehicleWorkerProximityRule(Config.MIN_VEHICLE_WORKER_DISTANCE))
 
-        # 初始化AI推理引擎（可选）
+        # 初始化AI推理引擎（可选）；优先环境变量 DEEPSEEK_API_KEY，避免密钥写进代码库
         reasoning_engine = None
-        if enable_ai and Config.DEEPSEEK_API_KEY:
-            deepseek_client = DeepSeekClient(Config.DEEPSEEK_API_KEY)
-            reasoning_engine = ReasoningEngine(deepseek_client)
+        deepseek_key = (os.environ.get("DEEPSEEK_API_KEY") or "").strip() or (
+            getattr(Config, "DEEPSEEK_API_KEY", "") or ""
+        ).strip()
+        if enable_ai and deepseek_key:
+            deepseek_client = DeepSeekClient(
+                deepseek_key,
+                base_url=Config.LLM_BASE_URL,
+                provider=Config.LLM_PROVIDER,
+            )
+            reasoning_engine = ReasoningEngine(
+                deepseek_client,
+                system_prompt=Config.LLM_SYSTEM_PROMPT,
+                model_name=Config.LLM_MODEL,
+                temperature=Config.LLM_TEMPERATURE,
+                max_tokens=Config.LLM_MAX_TOKENS,
+                timeout=Config.LLM_TIMEOUT,
+            )
+        elif enable_ai and not deepseek_key:
+            print(
+                "[Smart] 已请求启用 DeepSeek(enable_ai=true)，但未设置 DEEPSEEK_API_KEY（环境变量或 Config），推理引擎未创建"
+            )
 
         # 初始化智能监控服务
         with id_lock:
@@ -157,8 +201,11 @@ def start_smart_service():
                 cap=cap.getCap(),
                 rule_engine=rule_engine,
                 reasoning_engine=reasoning_engine,
+                ai_requested=enable_ai,
                 hot_zone=danger_zones_np[0] if danger_zones_np else None,
-                stay_threshold=Config.STAY_THRESHOLD
+                stay_threshold=Config.STAY_THRESHOLD,
+                loop_file=(cap_type == 'file'),
+                cap_type=cap_type,
             )
 
             # 启动服务线程
@@ -167,9 +214,13 @@ def start_smart_service():
             t.start()
 
             smart_services[service_id] = {"service": service, "thread": t}
+            print(f"[DEBUG] 服务启动成功，服务ID: {service_id}, 服务实例: {service}")
+            print(f"[DEBUG] 当前 smart_services 字典: {list(smart_services.keys())}")
             return jsonify({
                 "service_id": service_id,
-                "ai_enabled": reasoning_engine is not None
+                "ai_enabled": reasoning_engine is not None,
+                "ai_requested": enable_ai,
+                "deepseek_key_configured": bool(deepseek_key),
             }), 200
 
     except Exception as e:
@@ -211,7 +262,20 @@ def get_statistics(service):
 def get_alerts(service):
     max_count = request.args.get('max_count', 10, type=int)
     alerts = service.get_latest_alerts(max_count)
-    return jsonify({"alerts": alerts}), 200
+    live_status = service.get_live_monitor_status()
+    payload = json.dumps(
+        {"alerts": alerts, "live_status": live_status},
+        ensure_ascii=False,
+        default=str,
+    )
+    return Response(payload, mimetype="application/json; charset=utf-8"), 200
+
+
+# 路由：获取最新推理结果
+@smart_api_bp.route('/getDecision/<int:service_id>', methods=['GET'])
+@with_service
+def get_decision(service):
+    return jsonify({"decision": service.get_latest_decision()}), 200
 
 
 # 路由：获取活动规则列表

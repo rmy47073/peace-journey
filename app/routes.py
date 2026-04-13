@@ -4,7 +4,9 @@ import threading
 import numpy as np
 from functools import wraps
 from app.util.Camera import Camera
+from app.util.video_fs import list_video_files, resolve_safe_video_file
 from app.service.YoloService import YoloService
+from app.config.config import Config
 from flask import request, Blueprint, jsonify, Response
 
 
@@ -40,9 +42,13 @@ def send_frame_response(frame):
     if frame is None:
         return jsonify({"error": "No frame available"}), 400
 
-    # Convert NumPy array to JPEG
+    # Convert NumPy array to JPEG（降低质量可减小体积、加快传输）
     if isinstance(frame, np.ndarray):
-        ret, jpeg = cv2.imencode('.jpg', frame)
+        ret, jpeg = cv2.imencode(
+            '.jpg',
+            frame,
+            [int(cv2.IMWRITE_JPEG_QUALITY), int(Config.JPEG_QUALITY)],
+        )
         if not ret:
             return jsonify({"error": "Failed to encode frame"}), 500
         frame = jpeg.tobytes()
@@ -57,9 +63,7 @@ def send_frame_response(frame):
 # Route: Get list of video files in the ./videos directory
 @api_bp.route('/fileList', methods=['GET'])
 def fileList():
-    folder_path = "./videos"
-    file_list = [f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))]
-    return jsonify({"file_list": file_list}), 200
+    return jsonify({"file_list": list_video_files()}), 200
 
 
 # Route: Capture and return a single frame from camera or video
@@ -67,6 +71,11 @@ def fileList():
 def get_one_frame():
     cap_type = request.json.get('cap_type')
     cap_path = request.json.get('cap_path')
+    if cap_type == 'file':
+        safe = resolve_safe_video_file(cap_path)
+        if not safe:
+            return jsonify({"error": "无效的视频路径"}), 400
+        cap_path = safe
     cap = Camera()
     cap.setCap(cap_type, cap_path)
     if not cap.getCap().isOpened():
@@ -79,7 +88,11 @@ def get_one_frame():
     if not ret:
         return jsonify({"error": "Failed to capture frame"}), 500
 
-    ret, jpeg = cv2.imencode('.jpg', frame)
+    ret, jpeg = cv2.imencode(
+        '.jpg',
+        frame,
+        [int(cv2.IMWRITE_JPEG_QUALITY), int(Config.JPEG_QUALITY)],
+    )
     if not ret:
         return jsonify({"error": "Failed to encode frame"}), 500
     frame_bytes = jpeg.tobytes()
@@ -103,6 +116,12 @@ def start_service():
     if not cap_type or not cap_path:
         return jsonify({"error": "必须提供capture类型和路径"}), 400
 
+    if cap_type == 'file':
+        safe = resolve_safe_video_file(cap_path)
+        if not safe:
+            return jsonify({"error": "无效的视频路径"}), 400
+        cap_path = safe
+
     try:
         # 转换坐标点为numpy数组
         src_points = np.array([[point['x'], point['y']] for point in src_points], dtype=np.float32)
@@ -122,7 +141,13 @@ def start_service():
             global current_service_id
             current_service_id += 1
             service_id = current_service_id
-            service = YoloService(model_path, src_points, cap.getCap())
+            service = YoloService(
+                model_path,
+                src_points,
+                cap.getCap(),
+                loop_file=(cap_type == 'file'),
+                cap_type=cap_type,
+            )
             
             # 启动服务线程
             t = threading.Thread(target=service.start)
@@ -193,12 +218,8 @@ def release_service(service_id):
 # Route: Get runtime statistics of a service
 @api_bp.route('/getStatistics/<int:service_id>', methods=['POST'])
 def get_statistics(service_id):
-    # 修改前
-    service = yolo_services[service_id]['service']
-    
-    # 修改后 - 添加字典存在性检查
     if service_id not in yolo_services:
-        return {'error': f'Service {service_id} not found'}, 404
+        return jsonify({"error": f"Service {service_id} not found"}), 404
     service = yolo_services[service_id]['service']
     if service is None:
         return jsonify({"error": "Service not started"}), 400

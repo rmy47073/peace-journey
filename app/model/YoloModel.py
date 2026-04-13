@@ -1,9 +1,24 @@
 import cv2
 import time
 import numpy as np
+import torch
 from ultralytics import YOLO
 from collections import defaultdict
 from app.config.config import Config
+
+
+def _infer_device_and_half():
+    """按配置与硬件选择 device；半精度仅用于 NVIDIA CUDA。"""
+    dev = getattr(Config, "YOLO_DEVICE", "auto")
+    if dev == "auto":
+        if torch.cuda.is_available():
+            dev = 0
+        elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            dev = "mps"
+        else:
+            dev = "cpu"
+    use_half = bool(getattr(Config, "YOLO_HALF", True)) and dev != "cpu" and dev != "mps"
+    return dev, use_half
 
 
 class YoloModel:
@@ -26,7 +41,8 @@ class YoloModel:
             num_lanes (int): Number of lanes to draw in the bird’s-eye view.
             dst_points (ndarray): Destination points for perspective transformation (bird’s-eye view).
         """
-        self.model = YOLO(model_path)
+        self._model_path = model_path
+        self._model = None  # 延迟加载，避免在 HTTP 请求线程里卡住
         self.src_points = src_points
         self.dst_points = dst_points
         self.num_lanes = num_lanes
@@ -52,6 +68,9 @@ class YoloModel:
         self.crossing_count = 0
         self.track_timestamps = {}
         self.track_speeds = {}
+        # 无跟踪模式下，统计区展示「当前帧」车辆数
+        self._frame_vehicle_total = 0
+        self._frame_category_count = defaultdict(int)
         self.latest_scene_data = {
             "objects": [],
             "vehicles": [],
@@ -65,6 +84,12 @@ class YoloModel:
             "bicycle", "motorcycle", "car", "bus", "truck", "train", "boat"
         }
         self.worker_classes = {"person"}
+
+    @property
+    def model(self):
+        if self._model is None:
+            self._model = YOLO(self._model_path)
+        return self._model
 
     @staticmethod
     def draw_dashed_line(img, start, end, color, thickness, dash_length, gap_length):
@@ -125,30 +150,53 @@ class YoloModel:
 
     def track(self, frame):
         """
-        Perform tracking and annotation on a single frame.
+        Perform detection or tracking and annotation on a single frame.
 
-        Args:
-            frame: Input video frame.
+        When Config.ENABLE_TRACKING is False, uses predict() only (faster, no BoT-SORT).
 
         Returns:
-            annotated_frame: Frame with visual annotations.
-            frame: Original frame (unchanged).
-            birdView_frame: Bird’s-eye view frame with trajectory and lanes.
+            annotated_frame, frame, birdView_frame
         """
+        use_track = bool(getattr(Config, "ENABLE_TRACKING", False))
         frame_timestamp = time.time()
-        results = self.model.track(frame, persist=True, show=False, verbose=False)
+        device, half = _infer_device_and_half()
+        infer_kw = dict(
+            show=False,
+            verbose=False,
+            device=device,
+            half=half,
+            imgsz=int(Config.YOLO_IMGSZ),
+            conf=float(Config.YOLO_CONF),
+            iou=float(Config.YOLO_IOU),
+            max_det=int(Config.YOLO_MAX_DET),
+        )
+        if use_track:
+            results = self.model.track(frame, persist=True, **infer_kw)
+        else:
+            results = self.model.predict(frame, **infer_kw)
 
-        # 添加空值检查
         if not results or not results[0].boxes:
+            if not use_track:
+                self._frame_vehicle_total = 0
+                self._frame_category_count = defaultdict(int)
             return frame, frame, np.zeros((800, 500, 3), dtype=np.uint8)
 
         boxes = results[0].boxes.xywh.cpu()
         boxes_xyxy = results[0].boxes.xyxy.cpu()
-        track_ids = results[0].boxes.id.int().cpu().tolist() if results[0].boxes.id is not None else []
         cls_indices = results[0].boxes.cls.int().cpu().tolist()
         class_names = self.model.names
+        n = len(cls_indices)
+        if use_track:
+            if results[0].boxes.id is not None:
+                track_ids = results[0].boxes.id.int().cpu().tolist()
+            else:
+                track_ids = []
+            if len(track_ids) < n:
+                track_ids = track_ids + [-(i + 1) for i in range(len(track_ids), n)]
+        else:
+            track_ids = list(range(n))
 
-        annotated_frame = results[0].plot()
+        annotated_frame = results[0].plot(labels=False)
         birdView_frame = np.zeros((800, 500, 3), dtype=np.uint8)
         self.draw_lane_lines(birdView_frame)
         scene_objects = []
@@ -160,69 +208,78 @@ class YoloModel:
 
         for box, box_xyxy, track_id, cls_idx in zip(boxes, boxes_xyxy, track_ids, cls_indices):
             class_name = class_names[cls_idx]
-
-            # Count new vehicle appearances
-            if track_id not in self.seen_track_ids:
-                self.seen_track_ids.add(track_id)
-                self.vehicle_count += 1
-                self.category_count[class_name] += 1
-
             x, y, w, h = box
-            track = self.track_history[track_id]
-            track.append((float(x), float(y)))
-            if len(track) > Config.TRACK_HISTORY_SIZE:
-                track.pop(0)
-
             world_position = self._transform_point(float(x), float(y))
-            speed_kmh = self._estimate_speed(track_id, world_position, frame_timestamp)
             in_hot_zone = False
 
-            # Draw trajectory on original frame
-            points = np.hstack(track).astype(np.int32).reshape((-1, 1, 2))
-            cv2.polylines(annotated_frame, [points], isClosed=False, color=(230, 230, 230), thickness=10)
+            if use_track:
+                if track_id >= 0 and track_id not in self.seen_track_ids:
+                    self.seen_track_ids.add(track_id)
+                    self.vehicle_count += 1
+                    self.category_count[class_name] += 1
 
-            # Draw trajectory on bird’s-eye view
-            for point in track:
-                src_point = np.array([[[point[0], point[1]]]], dtype=np.float32)
-                dst_point = cv2.perspectiveTransform(src_point, self.M)
-                bx, by = dst_point[0][0]
-                cv2.circle(birdView_frame, (int(bx), int(by)), 5, (0, 255, 0), -1)
+                track = self.track_history[track_id]
+                track.append((float(x), float(y)))
+                if len(track) > Config.TRACK_HISTORY_SIZE:
+                    track.pop(0)
 
-            # Hot zone logic (for detecting long stay)
-            if self.hot_zone is not None:
-                dst_point = cv2.perspectiveTransform(np.array([[[x, y]]], dtype=np.float32), self.M)
-                bx, by = dst_point[0][0]
-                if cv2.pointPolygonTest(self.hot_zone, (int(bx), int(by)), False) >= 0:
-                    in_hot_zone = True
-                    if track_id not in self.entry_time:
-                        self.entry_time[track_id] = time.time()
-                    elif time.time() - self.entry_time[track_id] > self.stay_threshold:
-                        self.long_stay_ids.add(track_id)
-                elif track_id in self.entry_time:
-                    del self.entry_time[track_id]
+                speed_kmh = self._estimate_speed(track_id, world_position, frame_timestamp)
 
-            # Traffic flow logic (count vehicles crossing middle line)
-            if self.traffic_flow:
-                center_y = y
-                prev_positions = self.track_history[track_id][-2:] if len(self.track_history[track_id]) >= 2 else []
-                frame_height = frame.shape[0]
-                middle_line_y = frame_height // 2
+                points = np.hstack(track).astype(np.int32).reshape((-1, 1, 2))
+                cv2.polylines(annotated_frame, [points], isClosed=False, color=(230, 230, 230), thickness=10)
 
-                if len(prev_positions) == 2:
-                    prev_y = prev_positions[0][1]
-                    curr_y = center_y
-                    if (prev_y < middle_line_y <= curr_y) or (prev_y > middle_line_y >= curr_y):
-                        if track_id not in self.crossed_ids:
-                            self.crossed_ids.add(track_id)
-                            self.crossing_count += 1
+                for point in track:
+                    src_point = np.array([[[point[0], point[1]]]], dtype=np.float32)
+                    dst_point = cv2.perspectiveTransform(src_point, self.M)
+                    bx, by = dst_point[0][0]
+                    cv2.circle(birdView_frame, (int(bx), int(by)), 5, (0, 255, 0), -1)
 
-            # Label the ID in bird’s-eye view
-            if track:
-                src_point = np.array([[[track[-1][0], track[-1][1]]]], dtype=np.float32)
-                dst_point = cv2.perspectiveTransform(src_point, self.M)
-                bx, by = dst_point[0][0]
-                cv2.putText(birdView_frame, f"ID:{track_id}", (int(bx), int(by) - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+                if self.hot_zone is not None:
+                    dst_point = cv2.perspectiveTransform(np.array([[[x, y]]], dtype=np.float32), self.M)
+                    bx, by = dst_point[0][0]
+                    if cv2.pointPolygonTest(self.hot_zone, (int(bx), int(by)), False) >= 0:
+                        in_hot_zone = True
+                        if track_id not in self.entry_time:
+                            self.entry_time[track_id] = time.time()
+                        elif time.time() - self.entry_time[track_id] > self.stay_threshold:
+                            self.long_stay_ids.add(track_id)
+                    elif track_id in self.entry_time:
+                        del self.entry_time[track_id]
+
+                if self.traffic_flow:
+                    center_y = y
+                    prev_positions = self.track_history[track_id][-2:] if len(self.track_history[track_id]) >= 2 else []
+                    frame_height = frame.shape[0]
+                    middle_line_y = frame_height // 2
+                    if len(prev_positions) == 2:
+                        prev_y = prev_positions[0][1]
+                        curr_y = center_y
+                        if (prev_y < middle_line_y <= curr_y) or (prev_y > middle_line_y >= curr_y):
+                            if track_id not in self.crossed_ids:
+                                self.crossed_ids.add(track_id)
+                                self.crossing_count += 1
+
+                if track:
+                    src_point = np.array([[[track[-1][0], track[-1][1]]]], dtype=np.float32)
+                    dst_point = cv2.perspectiveTransform(src_point, self.M)
+                    bx, by = dst_point[0][0]
+                    cv2.putText(
+                        birdView_frame,
+                        f"ID:{int(track_id)}",
+                        (int(bx), max(int(by) - 10, 12)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (0, 255, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
+
+            else:
+                speed_kmh = 0.0
+                if self.hot_zone is not None:
+                    dst_point = cv2.perspectiveTransform(np.array([[[x, y]]], dtype=np.float32), self.M)
+                    bx, by = dst_point[0][0]
+                    in_hot_zone = cv2.pointPolygonTest(self.hot_zone, (int(bx), int(by)), False) >= 0
 
             object_data = {
                 "track_id": int(track_id),
@@ -251,6 +308,26 @@ class YoloModel:
             else:
                 equipment.append(object_data)
 
+            # 框外标注 track_id，与场景 JSON / DeepSeek 文案中的 id 一致（predict 模式下为帧内序号 0,1,…）
+            x1, y1, x2, y2 = [int(v) for v in box_xyxy.tolist()]
+            cv2.putText(
+                annotated_frame,
+                f"ID:{int(track_id)}",
+                (x1, max(y1 - 8, 14)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.58,
+                (0, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+
+        if not use_track:
+            self._frame_vehicle_total = len(vehicles)
+            fc = defaultdict(int)
+            for v in vehicles:
+                fc[v["class_name"]] += 1
+            self._frame_category_count = fc
+
         self.latest_scene_data = {
             "objects": scene_objects,
             "vehicles": vehicles,
@@ -258,7 +335,7 @@ class YoloModel:
             "equipment": equipment,
             "danger_zone_objects": danger_zone_objects,
             "fast_vehicles": fast_vehicles,
-            "abnormal_stays": sorted(self.long_stay_ids),
+            "abnormal_stays": sorted(self.long_stay_ids) if use_track else [],
         }
 
         return annotated_frame, frame, birdView_frame
@@ -312,6 +389,13 @@ class YoloModel:
         Returns:
             dict: Total vehicles, category counts, long stays, and flow crossing count.
         """
+        if not getattr(Config, "ENABLE_TRACKING", False):
+            return {
+                "total_count": self._frame_vehicle_total,
+                "category_count": dict(self._frame_category_count),
+                "long_stay_count": 0,
+                "crossing_count": 0,
+            }
         return {
             "total_count": self.vehicle_count,
             "category_count": self.category_count,
@@ -332,6 +416,8 @@ class YoloModel:
         self.crossed_ids.clear()
         self.track_timestamps.clear()
         self.track_speeds.clear()
+        self._frame_vehicle_total = 0
+        self._frame_category_count = defaultdict(int)
         self.latest_scene_data = {
             "objects": [],
             "vehicles": [],

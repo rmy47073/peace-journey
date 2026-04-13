@@ -5,12 +5,21 @@
 """
 from typing import Dict, List, Optional
 from app.ai.deepseek_client import DeepSeekClient
+from app.config.config import Config
 
 
 class ReasoningEngine:
     """智能推理决策引擎"""
 
-    def __init__(self, deepseek_client: Optional[DeepSeekClient] = None):
+    def __init__(
+        self,
+        deepseek_client: Optional[DeepSeekClient] = None,
+        system_prompt: Optional[str] = None,
+        model_name: str = "deepseek-chat",
+        temperature: float = 0.3,
+        max_tokens: int = 1200,
+        timeout: int = 30,
+    ):
         """
         初始化推理引擎
 
@@ -19,6 +28,11 @@ class ReasoningEngine:
         """
         self.deepseek_client = deepseek_client
         self.decision_history = []
+        self.system_prompt = system_prompt
+        self.model_name = model_name
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.timeout = timeout
 
     def make_decision(self, scene_data: Dict, rules_result: Dict) -> Dict:
         """
@@ -45,7 +59,15 @@ class ReasoningEngine:
 
         # 如果配置了DeepSeek，使用AI增强决策
         if self.deepseek_client and self._should_use_ai(rules_result):
-            ai_result = self.deepseek_client.analyze_scene(scene_data)
+            ai_result = self.deepseek_client.analyze_scene(
+                scene_data,
+                rules_result=rules_result,
+                system_prompt=self.system_prompt,
+                model=self.model_name,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                timeout=self.timeout,
+            )
             if ai_result:
                 decision["ai_analysis"] = ai_result
                 decision["final_decision"] = self._merge_decisions(
@@ -53,7 +75,9 @@ class ReasoningEngine:
                 )
                 decision["confidence"] = 0.9
             else:
-                # AI调用失败，仅使用规则
+                # AI 调用失败：保留 last_error 供界面展示
+                err = getattr(self.deepseek_client, "last_error", None) or "未收到模型响应"
+                decision["ai_error"] = err
                 decision["final_decision"] = self._rule_only_decision(rules_result)
                 decision["confidence"] = 0.7
         else:
@@ -83,12 +107,15 @@ class ReasoningEngine:
             return "low"
 
     def _should_use_ai(self, rules_result: Dict) -> bool:
-        """判断是否需要使用AI增强决策"""
-        # 复杂场景或高风险情况使用AI
-        alerts = rules_result.get("alerts", [])
-        return len(alerts) >= 2 or any(
-            a.get("level") in ["critical", "high"] for a in alerts
-        )
+        """判断是否需要调用大模型（频率由 SmartMonitoring 的 EventTrigger 控制）。"""
+        if not self.deepseek_client:
+            return False
+        if getattr(Config, "LLM_ONLY_ON_HEAVY_ALERTS", False):
+            alerts = rules_result.get("alerts", [])
+            return len(alerts) >= 2 or any(
+                a.get("level") in ["critical", "high"] for a in alerts
+            )
+        return True
 
     def _merge_decisions(self, rules_result: Dict, ai_result: Dict) -> Dict:
         """合并规则和AI的决策结果"""

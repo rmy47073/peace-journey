@@ -1,0 +1,13 @@
+path: train/datasets
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: person
+  1: reflective_vest
+  2: helmet
+  3: mixer_truck
+  4: excavator
+  5: dump_truck
+  6: warning_sign

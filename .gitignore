@@ -1,3 +1,35 @@
 *.pt
 *.mp4
 *.avi
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache/build artifacts
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+*.so
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Local environment/config files
+.env
+.env.*
+
+# IDE/editor/system
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+Desktop.ini

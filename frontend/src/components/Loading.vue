@@ -1,8 +1,7 @@
-<!-- filepath: frontend/src/components/Loading.vue -->
 <template>
   <div class="loading">
-    <img src="@/assets/loading.gif" alt="loading" />
-    <span>加载中...</span>
+    <img src="@/assets/loading.gif" alt="" role="presentation" />
+    <span>加载中…</span>
   </div>
 </template>
 
@@ -11,12 +10,15 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  color: #888;
-  margin: 20px 0;
+  color: var(--color-text-tertiary);
+  margin: 24px 0;
+  font-size: 15px;
 }
+
 .loading img {
-  width: 48px;
-  height: 48px;
-  margin-bottom: 8px;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 10px;
+  opacity: 0.85;
 }
 </style>
