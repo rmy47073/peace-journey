@@ -2,7 +2,7 @@
   <my-card>
     <h2>服务监控</h2>
     <p class="subtitle">
-      从项目 <code class="code-tag">videos</code> 目录选择视频启动基础检测，统计信息在画面下方实时显示。
+      从项目 <code class="code-tag">videos</code> 目录选择视频启动基础检测。
     </p>
 
     <videos-folder-picker
@@ -22,9 +22,6 @@
     <Transition name="service-dock">
       <section v-if="serviceId" :key="serviceId" class="service-dock">
         <service-frame-grid embedded :service-id="serviceId" />
-        <my-card class="service-dock__stats">
-          <service-statistics :service-id="serviceId" />
-        </my-card>
       </section>
     </Transition>
   </my-card>
@@ -36,7 +33,6 @@ import MyButton from '@/components/MyButton.vue'
 import MyCard from '@/components/MyCard.vue'
 import VideosFolderPicker from '@/components/VideosFolderPicker.vue'
 import ServiceFrameGrid from '@/components/ServiceFrameGrid.vue'
-import ServiceStatistics from '@/components/ServiceStatistics.vue'
 import { startService, releaseService } from '@/api/service'
 import { uiErrorMessage } from '@/utils/uiError'
 
@@ -133,10 +129,6 @@ onBeforeUnmount(() => {
   margin-top: 8px;
 }
 
-.service-dock__stats {
-  margin-top: 24px;
-}
-
 .service-dock-enter-active {
   transition:
     opacity 0.55s var(--ease-out-expo),
@@ -161,21 +153,6 @@ onBeforeUnmount(() => {
   transform: translateY(0);
 }
 
-.service-dock-enter-active .service-dock__stats {
-  animation: statsRise 0.55s var(--ease-out-expo) 0.1s both;
-}
-
-@keyframes statsRise {
-  from {
-    opacity: 0;
-    transform: translateY(14px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .service-dock-enter-active,
   .service-dock-leave-active {
@@ -190,8 +167,5 @@ onBeforeUnmount(() => {
     transform: none;
   }
 
-  .service-dock-enter-active .service-dock__stats {
-    animation: none;
-  }
 }
 </style>
